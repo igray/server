@@ -1,0 +1,16 @@
+{
+  "media": {
+    "folder": {
+      "artists": { "name": "Artists" },
+      "browse_by_year": { "name": "Browse by Year" }
+    },
+    "recommendations": {
+      "livephish_recently_played": { "name": "Recently Played" },
+      "livephish_recent_shows": { "name": "New Releases" },
+      "livephish_popular_shows": { "name": "Most Popular" }
+    }
+  },
+  "manifest": {
+    "description": "Stream official soundboard recordings of Phish and related projects from LivePhish."
+  }
+}

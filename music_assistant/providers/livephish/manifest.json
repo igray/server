@@ -1,0 +1,11 @@
+{
+  "type": "music",
+  "domain": "livephish",
+  "stage": "alpha",
+  "name": "LivePhish",
+  "description": "Stream official soundboard recordings of Phish and related projects from LivePhish.",
+  "codeowners": ["@igray"],
+  "requirements": [],
+  "documentation": "https://music-assistant.io/music-providers/livephish/",
+  "multi_instance": true
+}
