@@ -46,6 +46,26 @@ def parse_year(date_str: str | None) -> int | None:
     return int(part) if part.isdigit() and len(part) == 4 else None
 
 
+def track_item_id(album_id: str | None, track_id: str) -> str:
+    """
+    Return the Music Assistant item id of a track, which carries its show or album id.
+
+    :param album_id: Id of the show or album the track belongs to, if known.
+    :param track_id: LivePhish track id.
+    """
+    return f"{album_id}_{track_id}" if album_id else track_id
+
+
+def split_track_item_id(item_id: str) -> tuple[str | None, str]:
+    """
+    Return the show or album id (if any) and the LivePhish track id of a track item id.
+
+    :param item_id: Track item id as built by track_item_id.
+    """
+    album_id, _, track_id = item_id.rpartition("_")
+    return album_id or None, track_id
+
+
 def parse_artist(provider: str, domain: str, artist_obj: dict[str, Any]) -> Artist:
     """
     Parse a LivePhish artist object (legacy or catalog API).
@@ -110,7 +130,7 @@ def parse_container(provider: str, domain: str, container: dict[str, Any]) -> Al
     if url := image_url((container.get("img") or {}).get("url")):
         album.metadata.add_image(_image(provider, url))
     album.year = parse_year(container.get("performanceDate")) or parse_year(
-        container.get("releaseDateFormatted", "").replace("/", "-")
+        container.get("releaseDateFormatted")
     )
     album.album_type = (
         AlbumType.LIVE
@@ -134,7 +154,12 @@ def parse_container_track(
     :param track_obj: Track object from a container.
     :param album: The album the track belongs to.
     """
-    track = _new_track(provider, domain, str(track_obj["trackID"]), str(track_obj["songTitle"]))
+    track = _new_track(
+        provider,
+        domain,
+        track_item_id(album.item_id, str(track_obj["trackID"])),
+        str(track_obj["songTitle"]),
+    )
     track.artists.extend(album.artists)
     track.album = album
     for image in album.metadata.images or []:
@@ -156,7 +181,13 @@ def parse_playlist_track(provider: str, domain: str, track_obj: dict[str, Any]) 
     :param domain: Domain of the provider.
     :param track_obj: Playlist track object.
     """
-    track = _new_track(provider, domain, str(track_obj["trackId"]), str(track_obj["name"]))
+    release_id = str(track_obj["releaseId"]) if track_obj.get("releaseId") else None
+    track = _new_track(
+        provider,
+        domain,
+        track_item_id(release_id, str(track_obj["trackId"])),
+        str(track_obj["name"]),
+    )
     artist = track_obj.get("artist") or {}
     if not artist.get("id"):
         raise InvalidDataError("Track is missing artists")
@@ -168,13 +199,13 @@ def parse_playlist_track(provider: str, domain: str, track_obj: dict[str, Any]) 
             name=artist["name"],
         )
     )
-    if track_obj.get("releaseId"):
+    if release_id:
         venue = (track_obj.get("venue") or {}).get("title") or ""
         track.album = ItemMapping(
             media_type=MediaType.ALBUM,
-            item_id=str(track_obj["releaseId"]),
+            item_id=release_id,
             provider=provider,
-            name=track_obj.get("albumTitle") or venue or str(track_obj["releaseId"]),
+            name=track_obj.get("albumTitle") or venue or release_id,
         )
     if url := image_url((track_obj.get("image") or {}).get("url")):
         track.metadata.add_image(_image(provider, url))

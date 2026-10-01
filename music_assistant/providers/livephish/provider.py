@@ -64,6 +64,7 @@ from .parsers import (
     parse_playlist,
     parse_playlist_track,
     parse_release,
+    split_track_item_id,
 )
 
 if TYPE_CHECKING:
@@ -146,7 +147,7 @@ class LivePhishProvider(MusicProvider):
                 startOffset=1,
                 **filters,
             )
-            for container in containers["containers"]:
+            for container in containers.get("containers") or []:
                 album = parse_container(self.instance_id, self.domain, container)
                 albums.setdefault(album.item_id, album)
                 for song in container.get("songs") or []:
@@ -156,9 +157,7 @@ class LivePhishProvider(MusicProvider):
         if MediaType.ALBUM in media_types:
             result.albums = list(albums.values())[:limit]
         if MediaType.TRACK in media_types:
-            found_tracks = list(tracks.values())[:limit]
-            await self._cache_tracks(found_tracks)
-            result.tracks = found_tracks
+            result.tracks = list(tracks.values())[:limit]
         return result
 
     async def get_library_artists(self) -> AsyncGenerator[Artist]:
@@ -212,21 +211,25 @@ class LivePhishProvider(MusicProvider):
         """Get all tracks of the given show or album."""
         container = await self._get_show(prov_album_id)
         album = parse_container(self.instance_id, self.domain, container)
-        tracks = [
+        return [
             parse_container_track(self.instance_id, self.domain, item, album)
             for item in container.get("tracks") or []
             if item.get("trackID")
         ]
-        await self._cache_tracks(tracks)
-        return tracks
 
     async def get_track(self, prov_track_id: str) -> Track:
-        """Get track details by id, for tracks seen in a show, album or playlist."""
-        cached: Track | None = await self.mass.cache.get(
-            self._track_cache_key(prov_track_id), provider=self.instance_id, base_class=Track
-        )
-        if cached:
-            return cached
+        """Get track details by id."""
+        album_id, _ = split_track_item_id(prov_track_id)
+        if album_id:
+            album_tracks = await self.get_album_tracks(album_id)
+            if track := next((t for t in album_tracks if t.item_id == prov_track_id), None):
+                return track
+        else:
+            cached: Track | None = await self.mass.cache.get(
+                self._track_cache_key(prov_track_id), provider=self.instance_id, base_class=Track
+            )
+            if cached:
+                return cached
         raise MediaNotFoundError(f"Track {prov_track_id} not found")
 
     @use_cache(3600 * 24 * 14)
@@ -248,7 +251,7 @@ class LivePhishProvider(MusicProvider):
             track = parse_playlist_track(self.instance_id, self.domain, item)
             track.position = position
             tracks.append(track)
-        await self._cache_tracks(tracks)
+        await self._cache_tracks([t for t in tracks if not split_track_item_id(t.item_id)[0]])
         return tracks
 
     async def browse(self, path: str) -> Sequence[MediaItemType | ItemMapping | BrowseFolder]:
@@ -332,7 +335,7 @@ class LivePhishProvider(MusicProvider):
         )
         response = await self._request(
             "GET",
-            PLAYBACK_URL.format(track_id=item_id),
+            PLAYBACK_URL.format(track_id=split_track_item_id(item_id)[1]),
             params={"formats": "lossy", "forceFlac": "true"},
         )
         if not response.get("url"):
@@ -359,18 +362,15 @@ class LivePhishProvider(MusicProvider):
         """Report a finished or stopped track to the LivePhish recently played list."""
         if media_type != MediaType.TRACK or is_playing:
             return
-        try:
-            track = await self.get_track(prov_item_id)
-        except MediaNotFoundError:
-            return
-        if not track.album:
+        album_id, track_id = split_track_item_id(prov_item_id)
+        if not album_id:
             return
         await self._request(
             "POST",
             f"{CATALOG_URL}/me/recently-played/releases",
             json_body={
-                "id": track.album.item_id,
-                "trackId": prov_item_id,
+                "id": album_id,
+                "trackId": track_id,
                 "playbackPosition": position,
             },
         )
@@ -432,7 +432,6 @@ class LivePhishProvider(MusicProvider):
         response = await self._request("GET", f"{CATALOG_URL}/shows/{show_id}")
         return dict(response["Response"])
 
-    @use_cache(3600)
     async def _get_subscription(self) -> dict[str, Any]:
         """Return the user's active subscription, or an empty dict when there is none."""
         subscriptions = await self._request("GET", SUBSCRIPTIONS_URL)
